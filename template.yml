@@ -1,0 +1,100 @@
+---
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: "AWS::Serverless-2016-10-31"
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+  InstanceType:
+    Type: String
+    Default: m4.xlarge
+
+Globals:
+  Function:
+    Runtime: python3.9
+    Handler: index.lambda_handler
+    MemorySize: 128
+    Timeout: 60
+
+Resources:
+  LambdaExecutionRole:
+    Description: Service Role for Lambda to trigger EMR job
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'trigger-emr-job-${Environment}'
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: [ lambda.amazonaws.com ]
+            Action: sts:AssumeRole
+      Path: /
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonEMRFullAccessPolicy_v2'
+      Policies:
+       - PolicyName: TriggerLambdaS3AccessPolicy
+         PolicyDocument:
+           Version: "2012-10-17"
+           Statement:
+             - Effect: Allow
+               Action:
+                 - s3:GetObject
+                 - s3:PutObject
+               Resource:
+                 - !Sub 'arn:aws:s3:::${Environment}-source-data-datafluids'
+                 - !Sub 'arn:aws:s3:::${Environment}-destination-data-datafluids'
+             - Effect: Allow
+               Action:
+                 - logs:PutLogEvents
+                 - logs:CreateLogGroup
+                 - logs:CreateLogStream
+               Resource: "arn:aws:logs:*:*:*"
+
+  SourceDataBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${Environment}-source-data-datafluids'
+
+
+  DestinationCleanDataDataBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${Environment}-destination-data-datafluids'
+
+  TriggerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/trigger
+      Events:
+        DataUploadEvent:
+          Type: S3
+          Properties:
+            Bucket: !Ref SourceDataBucket
+            Events: s3:ObjectCreated:*
+      Role:
+        Fn::GetAtt:
+          - LambdaExecutionRole
+          - Arn
+
+  # cluster:
+  #   Type: AWS::EMR::Cluster
+  #   Properties:
+  #     ReleaseLabel: emr-6.2.0
+  #     Instances:
+  #       MasterInstanceGroup:
+  #         InstanceCount: 1
+  #         InstanceType: !Ref InstanceType
+  #         Market: ON_DEMAND
+  #         Name: "Master - 1"
+  #       CoreInstanceGroup:
+  #         InstanceCount: 2
+  #         InstanceType: !Ref InstanceType
+  #         Market: ON_DEMAND
+  #         Name: "Core - 2"
+  #       TerminationProtected: false
+  #     Name: emr-cluster
+  #     JobFlowRole: EMR_EC2_DefaultRole
+  #     ServiceRole: EMR_DefaultRole
+  #     VisibleToAllUsers: true
+
